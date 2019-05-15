@@ -10,6 +10,7 @@ angular.module("faradayApp")
         function (BASEURL, $http, $q) {
             var ServerAPI = {};
             var APIURL = BASEURL + "_api/v2/";
+            var FILTER_URL = BASEURL + "_api/filter/";
 
             var createGetRelatedUrl = function (wsName, objectType, objectId, relatedObjectType) {
                 var objectName = ((objectName) ? "/" + objectType : "");
@@ -346,6 +347,11 @@ angular.module("faradayApp")
                 return get(getUrl, data);
             }
 
+            ServerAPI.getFilteredVulns = function (wsName, jsonOptions) {
+                var getUrl = createGetUrl(wsName, 'vulns');
+                return get(getUrl + 'filter?q=' + jsonOptions);
+            }
+
             ServerAPI.getVulnerabilityTemplate = function (objId) {
                 var url = createNonWorkspacedGetUrl('vulnerability_template', objId);
                 return get(url);
@@ -399,6 +405,10 @@ angular.module("faradayApp")
                 return get(getUrl);
             }
 
+             ServerAPI.getCustomFields = function () {
+                return get(APIURL + "custom_fields_schema/");
+            }
+
             ServerAPI.activateWorkspace = function (wsName) {
                 var putUrl = APIURL + "ws/" + wsName + "/activate/";
                 return send_data(putUrl, undefined, false, "PUT");
@@ -408,6 +418,12 @@ angular.module("faradayApp")
                 var putUrl = APIURL + "ws/" + wsName + "/deactivate/";
                 return send_data(putUrl, undefined, false, "PUT");
             }
+
+            ServerAPI.readOnlyToogle = function (wsName) {
+                var putUrl = APIURL + "ws/" + wsName + "/change_readonly/";
+                return send_data(putUrl, undefined, false, "PUT");
+            }
+
 
             ServerAPI.getWorkspaceSummary = function (wsName, confirmed) {
 

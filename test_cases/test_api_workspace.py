@@ -9,7 +9,6 @@ import pytest
 
 from server.models import Workspace, Scope
 from server.api.modules.workspaces import WorkspaceView
-from test_cases.conftest import ignore_nplusone
 from test_cases.test_api_non_workspaced_base import ReadWriteAPITests
 from test_cases import factories
 
@@ -194,13 +193,43 @@ class TestWorkspaceAPI(ReadWriteAPITests):
         ]
         raw_data = {'name': 'something', 'description': 'test',
                     'scope': desired_scope}
-        res = test_client.put('/v2/ws/{}/'.format(workspace.name),
-                              data=raw_data)
+        res = test_client.put('/v2/ws/{}/'.format(workspace.name), data=raw_data)
         assert res.status_code == 200
         assert set(res.json['scope']) == set(desired_scope)
         assert set(s.name for s in workspace.scope) == set(desired_scope)
 
-    @ignore_nplusone
+    @pytest.mark.skip  # TODO fix fox sqlite
     def test_list_retrieves_all_items_from(self, test_client):
         super(TestWorkspaceAPI, self).test_list_retrieves_all_items_from(test_client)
 
+    def test_workspace_activation(self, test_client, workspace, session):
+        workspace.active = False
+        session.add(workspace)
+        session.commit()
+        res = test_client.put('{url}{id}/activate/'
+                    .format(url=self.url(),
+                    id=workspace.name))
+        assert res.status_code == 200
+
+        res = test_client.get('{url}{id}/'.format(url=self.url(),id=workspace.name))
+        active = res.json.get('active')
+        assert active == True
+
+        active_query = session.query(Workspace).filter_by(id=workspace.id).first().active
+        assert active_query == True
+
+    def test_workspace_deactivation(self, test_client, workspace, session):
+        workspace.active = True
+        session.add(workspace)
+        session.commit()
+        res = test_client.put('{url}{id}/deactivate/'
+                    .format(url=self.url(),
+                    id=workspace.name))
+        assert res.status_code == 200
+
+        res = test_client.get('{url}{id}/'.format(url=self.url(),id=workspace.name))
+        active = res.json.get('active')
+        assert active == False
+
+        active_query = session.query(Workspace).filter_by(id=workspace.id).first().active
+        assert active_query == False

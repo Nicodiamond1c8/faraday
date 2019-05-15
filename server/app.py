@@ -6,18 +6,20 @@ import logging
 import os
 import string
 import datetime
+from future.builtins import range # __future__
 from os.path import join, expanduser
 from random import SystemRandom
 
+from model.workspace import Workspace
 from server.config import LOCAL_CONFIG_FILE, copy_default_config_to_local
-from server.models import User
+from server.models import User, Vulnerability, VulnerabilityWeb, Workspace, VulnerabilityGeneric
 
 try:
     # py2.7
-    from configparser import ConfigParser, NoSectionError, NoOptionError
+    from configparser import ConfigParser, NoSectionError, NoOptionError, DuplicateSectionError
 except ImportError:
     # py3
-    from ConfigParser import ConfigParser, NoSectionError, NoOptionError
+    from ConfigParser import ConfigParser, NoSectionError, NoOptionError, DuplicateSectionError
 
 import flask
 from flask import Flask, session, g
@@ -51,8 +53,11 @@ def setup_storage_path():
         os.mkdir(default_path)
     config = ConfigParser()
     config.read(server.config.LOCAL_CONFIG_FILE)
-    config.add_section('storage')
-    config.set('storage', 'path', default_path)
+    try:
+        config.add_section('storage')
+        config.set('storage', 'path', default_path)
+    except DuplicateSectionError:
+        logger.info('Duplicate section storage. skipping.')
     with open(server.config.LOCAL_CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
 
@@ -76,6 +81,7 @@ def register_blueprints(app):
     from server.api.modules.upload_reports import upload_api
     from server.api.modules.websocket_auth import websocket_auth_api
     from server.api.modules.get_exploits import exploits_api
+    from server.api.modules.custom_fields import custom_fields_schema_api
     app.register_blueprint(commandsrun_api)
     app.register_blueprint(activityfeed_api)
     app.register_blueprint(credentials_api)
@@ -92,6 +98,7 @@ def register_blueprints(app):
     app.register_blueprint(upload_api)
     app.register_blueprint(websocket_auth_api)
     app.register_blueprint(exploits_api)
+    app.register_blueprint(custom_fields_schema_api)
 
 
 def check_testing_configuration(testing, app):
@@ -152,9 +159,13 @@ def save_new_secret_key(app):
     config = ConfigParser()
     config.read(LOCAL_CONFIG_FILE)
     rng = SystemRandom()
-    secret_key = "".join([rng.choice(string.ascii_letters + string.digits) for _ in xrange(25)])
+    secret_key = "".join([rng.choice(string.ascii_letters + string.digits) for _ in range(25)])
     app.config['SECRET_KEY'] = secret_key
-    config.set('faraday_server', 'secret_key', secret_key)
+    try:
+        config.set('faraday_server', 'secret_key', secret_key)
+    except NoSectionError:
+        config.add_section('faraday_server')
+        config.set('faraday_server', 'secret_key', secret_key)
     with open(LOCAL_CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
 

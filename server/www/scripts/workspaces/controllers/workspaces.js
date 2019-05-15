@@ -134,6 +134,7 @@ angular.module('faradayApp')
             $scope.insert = function (workspace) {
                 delete workspace.selected;
                 workspacesFact.put(workspace).then(function (resp) {
+                        workspace.active = resp.data.active;
                         workspace.stats = resp.data.stats;
                         $scope.onSuccessInsert(workspace)
                     },
@@ -370,6 +371,12 @@ angular.module('faradayApp')
 
         $scope.clearSearch = function() {
           $scope.search = '';
+        };
+
+         $scope.readonlyToggle = function (ws) {
+            workspacesFact.readOnlyToogle(ws.name).then(function (resp) {
+                ws.readonly = resp.data;
+            });
         };
 
             $scope.init();

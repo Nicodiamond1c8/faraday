@@ -1,14 +1,21 @@
 # Faraday Penetration Test IDE
 # Copyright (C) 2016  Infobyte LLC (http://www.infobytesec.com/)
 # See the file 'doc/LICENSE' for the license information
+import os
 import json
 
 import flask
 from flask import Blueprint
 from flask_classful import route
 from marshmallow import Schema, fields, post_load, validate
+from sqlalchemy.orm import (
+    query_expression,
+    with_expression
+)
+from sqlalchemy.orm.exc import NoResultFound
 
-from server.models import db, Workspace
+
+from server.models import db, Workspace, _make_vuln_count_property
 from server.schemas import (
     JSTimestampField,
     MutableField,
@@ -16,6 +23,7 @@ from server.schemas import (
     SelfNestedField,
 )
 from server.api.base import ReadWriteView, AutoSchema
+from config.configuration import getInstanceConfiguration
 
 workspace_api = Blueprint('workspace_api', __name__)
 
@@ -51,6 +59,7 @@ class WorkspaceSchema(AutoSchema):
         PrimaryKeyRelatedField('name', many=True, dump_only=True),
         fields.List(fields.String)
     )
+    active = fields.Boolean(dump_only=True)
 
     create_date = fields.DateTime(attribute='create_date',
                            dump_only=True)
@@ -63,7 +72,7 @@ class WorkspaceSchema(AutoSchema):
         model = Workspace
         fields = ('_id', 'id', 'customer', 'description', 'active',
                   'duration', 'name', 'public', 'scope', 'stats',
-                  'create_date', 'update_date')
+                  'create_date', 'update_date', 'readonly')
 
     @post_load
     def post_load_duration(self, data):
@@ -82,32 +91,111 @@ class WorkspaceView(ReadWriteView):
     schema_class = WorkspaceSchema
     order_field = Workspace.name.asc()
 
-    def _get_base_query(self):
+    def index(self, **kwargs):
+        query = self._get_base_query()
+        objects = []
+        for workspace_stat in query:
+            workspace_stat = dict(workspace_stat)
+            for key, value in workspace_stat.items():
+                if key.startswith('workspace_'):
+                    new_key = key.replace('workspace_', '')
+                    workspace_stat[new_key] = workspace_stat[key]
+            workspace_stat['scope'] = []
+            if workspace_stat['scope_raw']:
+                workspace_stat['scope_raw'] = workspace_stat['scope_raw'].split(',')
+                for scope in workspace_stat['scope_raw']:
+                    workspace_stat['scope'].append({'name': scope})
+            objects.append(workspace_stat)
+        return self._envelope_list(self._dump(objects, kwargs, many=True))
+
+    def _get_querystring_boolean_field(self, field_name, default=None):
         try:
-            confirmed = bool(json.loads(flask.request.args['confirmed']))
+            val = bool(json.loads(flask.request.args[field_name]))
         except (KeyError, ValueError):
-            confirmed = None
-        try:
-            active = bool(json.loads(flask.request.args['active']))
-            query = Workspace.query_with_count(confirmed).filter(self.model_class.active == active)
-        except (KeyError, ValueError):
-            query = Workspace.query_with_count(confirmed)
+            val = default
+        return val
+
+    def _get_base_query(self, object_id=None):
+        confirmed = self._get_querystring_boolean_field('confirmed')
+        active = self._get_querystring_boolean_field('active')
+        readonly = self._get_querystring_boolean_field('readonly')
+        query = Workspace.query_with_count(
+                confirmed,
+                active=active,
+                readonly=readonly,
+                workspace_name=object_id)
         return query
 
-    def _get_base_query_deactivated(self):
+    def _get_object(self, object_id, eagerload=False, **kwargs):
+        """
+        Given the object_id and extra route params, get an instance of
+        ``self.model_class``
+        """
+        confirmed = self._get_querystring_boolean_field('confirmed')
+        active = self._get_querystring_boolean_field('active')
+        self._validate_object_id(object_id)
+        query = db.session.query(Workspace).filter_by(name=object_id)
+        if active is not None:
+            query = query.filter_by(active=active)
+        query = query.options(
+                 with_expression(
+                     Workspace.vulnerability_web_count,
+                         _make_vuln_count_property('vulnerability_web',
+                                          confirmed=confirmed,
+                                          use_column_property=False),
+                 ),
+                 with_expression(
+                     Workspace.vulnerability_standard_count,
+                         _make_vuln_count_property('vulnerability',
+                                          confirmed=confirmed,
+                                          use_column_property=False)
+                ),
+                with_expression(
+                     Workspace.vulnerability_total_count,
+                         _make_vuln_count_property(type_=None,
+                                          confirmed=confirmed,
+                                          use_column_property=False)
+               ),
+               with_expression(
+                     Workspace.vulnerability_code_count,
+                    _make_vuln_count_property('vulnerability_code',
+                                          use_column_property=False)
+            ),
+
+
+        )
+
         try:
-            confirmed = bool(json.loads(flask.request.args['confirmed']))
-        except (KeyError, ValueError):
-            confirmed = None
-        query = Workspace.query_with_count(confirmed).filter(self.model_class.active == False)
-        return query
+            obj = query.one()
+        except NoResultFound:
+            flask.abort(404, 'Object with id "%s" not found' % object_id)
+        return obj
 
     def _perform_create(self, data, **kwargs):
         scope = data.pop('scope', [])
         workspace = super(WorkspaceView, self)._perform_create(data, **kwargs)
         workspace.set_scope(scope)
+        self._createWorkspaceFolder(workspace.name)
         db.session.commit()
         return workspace
+
+    def _createWorkspaceFolder(self, name):
+        CONF = getInstanceConfiguration()
+        self._report_path = os.path.join(CONF.getReportPath(), name)
+        self._report_ppath = os.path.join(self._report_path, "process")
+        self._report_upath = os.path.join(self._report_path, "unprocessed")
+
+        if not os.path.exists(CONF.getReportPath()):
+            os.mkdir(CONF.getReportPath())
+
+        if not os.path.exists(self._report_path):
+            os.mkdir(self._report_path)
+
+        if not os.path.exists(self._report_ppath):
+            os.mkdir(self._report_ppath)
+
+        if not os.path.exists(self._report_upath):
+            os.mkdir(self._report_upath)
 
     def _update_object(self, obj, data):
         scope = data.pop('scope', [])
@@ -132,6 +220,12 @@ class WorkspaceView(ReadWriteView):
         changed = self._get_object(workspace_id).deactivate()
         db.session.commit()
         return changed
+
+    @route('/<workspace_id>/change_readonly/', methods=["PUT"])
+    def change_readonly(self, workspace_id):
+        self._get_object(workspace_id).change_readonly()
+        db.session.commit()
+        return self._get_object(workspace_id).readonly
 
 
 WorkspaceView.register(workspace_api)

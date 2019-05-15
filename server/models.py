@@ -17,11 +17,14 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    event)
+    event,
+    text
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import relationship, undefer
 from sqlalchemy.sql import select, text, table
 from sqlalchemy.sql.expression import asc, case, join
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy import func
 from sqlalchemy.orm import (
     backref,
@@ -36,10 +39,11 @@ from flask_sqlalchemy import (
     SQLAlchemy as OriginalSQLAlchemy,
     _EngineConnector
 )
+
 from depot.fields.sqlalchemy import UploadedFileField
 
 import server.config
-from server.fields import FaradayUploadedFile
+from server.fields import FaradayUploadedFile, JSONType
 from flask_security import (
     RoleMixin,
     UserMixin,
@@ -480,6 +484,17 @@ class Service(Metadata):
                                  version or "")
 
 
+class CustomFieldsSchema(db.Model):
+    __tablename__ = 'custom_fields_schema'
+
+    id = Column(Integer, primary_key=True)
+    field_name = Column(Text)
+    field_type = Column(Text)
+    field_display_name = Column(Text)
+    field_order = Column(Integer)
+    table_name = Column(Text)
+
+
 class VulnerabilityABC(Metadata):
     # revisar plugin nexpose, netspark para terminar de definir uniques. asegurar que se carguen bien
     EASE_OF_RESOLUTIONS = [
@@ -519,6 +534,8 @@ class VulnerabilityABC(Metadata):
                         name='check_vulnerability_risk'),
     )
 
+    custom_fields = Column(JSONType)
+
     @property
     def parent(self):
         raise NotImplementedError('ABC property called')
@@ -541,7 +558,7 @@ class CustomAssociationSet(_AssociationSet):
         The value_attr argument isn't relevant to this implementation
         """
 
-        if parent.getset_factory:
+        if getattr(parent, 'getset_factory', False):
             getter, setter = parent.getset_factory(
                 parent.collection_class, parent)
         else:
@@ -551,7 +568,11 @@ class CustomAssociationSet(_AssociationSet):
             lazy_collection, creator, getter, setter, parent)
 
     def _create(self, value):
-        parent_instance = self.lazy_collection.ref()
+        if getattr(self.lazy_collection, 'ref', False):
+            # for sqlalchemy previous to 1.3.0b1
+            parent_instance = self.lazy_collection.ref()
+        else:
+            parent_instance = self.lazy_collection.parent
         session = db.session
         conflict_objs = session.new
         try:
@@ -657,6 +678,7 @@ class VulnerabilityTemplate(VulnerabilityABC):
         proxy_factory=CustomAssociationSet,
         creator=_build_associationproxy_creator_non_workspaced('PolicyViolationTemplate')
     )
+    custom_fields = Column(JSONType)
 
 
 class CommandObject(db.Model):
@@ -932,6 +954,10 @@ class VulnerabilityGeneric(VulnerabilityABC):
             object_type='vulnerability'
         )
 
+    @hybrid_property
+    def target(self):
+        return self.target_host_ip
+
 
 class Vulnerability(VulnerabilityGeneric):
     __tablename__ = None
@@ -1134,7 +1160,7 @@ class PolicyViolationTemplateVulnerabilityAssociation(db.Model):
     policy_violation_id = Column(Integer, ForeignKey('policy_violation_template.id'), primary_key=True)
 
     policy_violation = relationship("PolicyViolationTemplate", backref="policy_violation_template_associations", foreign_keys=[policy_violation_id])
-    vulnerability = relationship("VulnerabilityTemplate", backref="policy_violation_template_vulnerability_associations",
+    vulnerability = relationship("VulnerabilityTemplate", backref=backref("policy_violation_template_vulnerability_associations", cascade="all, delete-orphan"),
                                  foreign_keys=[vulnerability_id])
 
 
@@ -1292,6 +1318,7 @@ class Workspace(Metadata):
     customer = BlankColumn(String(250))  # TBI
     description = BlankColumn(Text)
     active = Column(Boolean(), nullable=False, default=True)  # TBI
+    readonly = Column(Boolean(), nullable=False, default=False)  # TBI
     end_date = Column(DateTime(), nullable=True)
     name = NonBlankColumn(String(250), unique=True, nullable=False)
     public = Column(Boolean(), nullable=False, default=False)  # TBI
@@ -1313,43 +1340,84 @@ class Workspace(Metadata):
         cascade="all, delete-orphan")
 
     @classmethod
-    def query_with_count(cls, confirmed):
+    def query_with_count(cls, confirmed, active=True, readonly=None, workspace_name=None):
         """
         Add count fields to the query.
 
         If confirmed is True/False, it will only show the count for confirmed / not confirmed
         vulnerabilities. Otherwise, it will show the count of all of them
         """
-        return cls.query.options(
-            undefer(cls.host_count),
-            undefer(cls.credential_count),
-            undefer(cls.open_service_count),
-            undefer(cls.total_service_count),
-            with_expression(
-                cls.vulnerability_web_count,
-                _make_vuln_count_property('vulnerability_web',
-                                          confirmed=confirmed,
-                                          use_column_property=False)
-            ),
-            with_expression(
-                cls.vulnerability_code_count,
-                _make_vuln_count_property('vulnerability_code',
-                                          confirmed=confirmed,
-                                          use_column_property=False)
-            ),
-            with_expression(
-                cls.vulnerability_standard_count,
-                _make_vuln_count_property('vulnerability',
-                                          confirmed=confirmed,
-                                          use_column_property=False)
-            ),
-            with_expression(
-                cls.vulnerability_total_count,
-                _make_vuln_count_property(type_=None,
-                                          confirmed=confirmed,
-                                          use_column_property=False)
-            ),
-        )
+        query = """
+                SELECT
+                (SELECT COUNT(credential.id) AS count_1
+                    FROM credential
+                    WHERE credential.workspace_id = workspace.id
+                ) AS credentials_count,
+                (SELECT COUNT(host.id) AS count_2
+                    FROM host
+                    WHERE host.workspace_id = workspace.id
+                ) AS host_count,
+                p_4.count_3 as open_services,
+                p_4.count_4 as total_service_count,
+                p_5.count_5 as vulnerability_web_count,
+                p_5.count_6 as vulnerability_code_count,
+                p_5.count_7 as vulnerability_standard_count,
+                p_5.count_8 as vulnerability_total_count,
+                workspace.create_date AS workspace_create_date,
+                workspace.update_date AS workspace_update_date,
+                workspace.id AS workspace_id,
+                workspace.customer AS workspace_customer,
+                workspace.description AS workspace_description,
+                workspace.active AS workspace_active,
+                workspace.readonly AS workspace_readonly,
+                workspace.end_date AS workspace_end_date,
+                workspace.name AS workspace_name,
+                workspace.public AS workspace_public,
+                workspace.start_date AS workspace_start_date,
+                workspace.update_user_id AS workspace_update_user_id,
+                workspace.creator_id AS workspace_creator_id,
+                (SELECT {concat_func}(scope.name, ',') FROM scope where scope.workspace_id=workspace.id) as scope_raw
+            FROM workspace
+            LEFT JOIN (SELECT w.id as wid, COUNT(case when service.id IS NOT NULL and service.status = 'open' then 1 else null end) as count_3, COUNT(case when service.id IS NOT NULL then 1 else null end) AS count_4
+                    FROM service
+                    RIGHT JOIN workspace w ON service.workspace_id = w.id
+                    GROUP BY w.id
+                ) AS p_4 ON p_4.wid = workspace.id
+            LEFT JOIN (SELECT w.id as w_id, COUNT(case when vulnerability.type = 'vulnerability_web' then 1 else null end) as count_5, COUNT(case when vulnerability.type = 'vulnerability_code' then 1 else null end) AS count_6, COUNT(case when vulnerability.type = 'vulnerability' then 1 else null end) as count_7, COUNT(case when vulnerability.id IS NOT NULL then 1 else null end) AS count_8
+                    FROM vulnerability
+                    RIGHT JOIN workspace w ON vulnerability.workspace_id = w.id
+                    WHERE 1=1 {0}
+                    GROUP BY w.id
+                ) AS p_5 ON p_5.w_id = workspace.id
+        """
+        concat_func = 'string_agg'
+        if db.engine.dialect.name == 'sqlite':
+            concat_func = 'group_concat'
+        filters = []
+        params = {}
+
+        confirmed_vuln_filter = ''
+        if confirmed is not None:
+            if confirmed:
+                confirmed_vuln_filter = " AND vulnerability.confirmed "
+            else:
+                confirmed_vuln_filter = " AND NOT vulnerability.confirmed "
+        query = query.format(confirmed_vuln_filter, concat_func=concat_func)
+
+        if active is not None:
+            filters.append(" workspace.active = :active ")
+            params['active'] = active
+        if readonly is not None:
+            filters.append(" workspace.readonly = :readonly ")
+            params['readonly'] = readonly
+        if workspace_name:
+            filters.append(" workspace.name = :workspace_name ")
+            params['workspace_name'] = workspace_name
+        if filters:
+            query += ' WHERE ' + ' AND '.join(filters)
+        #query += " GROUP BY workspace.id "
+        query += " ORDER BY workspace.name ASC"
+        return db.session.execute(text(query), params)
 
     def set_scope(self, new_scope):
         return set_children_objects(self, new_scope,
@@ -1366,12 +1434,14 @@ class Workspace(Metadata):
         # else:
         # raise Cannot exceed or return false
 
-
     def deactivate(self):
         if self.active is not False:
             self.active = False
             return True
         return False
+
+    def change_readonly(self):
+        self.readonly = not self.readonly
 
 
 class Scope(Metadata):
@@ -1430,6 +1500,7 @@ class User(db.Model, UserMixin):
 
     __tablename__ = 'faraday_user'
     ROLES = ['admin', 'pentester', 'client']
+    OTP_STATES = ["disabled", "requested", "confirmed"]
 
     id = Column(Integer, primary_key=True)
     username = NonBlankColumn(String(255), unique=True)
@@ -1446,6 +1517,11 @@ class User(db.Model, UserMixin):
     confirmed_at = Column(DateTime())
     role = Column(Enum(*ROLES, name='user_roles'),
                   nullable=False, default='client')
+    _otp_secret = Column(
+            String(16),
+            name="otp_secret", nullable=True)
+    state_otp = Column(Enum(*OTP_STATES, name='user_otp_states'), nullable=False, default="disabled")
+
     # TODO: add  many to many relationship to add permission to workspace
 
     workspace_permission_instances = relationship(
@@ -1717,6 +1793,7 @@ class ExecutiveReport(Metadata):
     title = BlankColumn(Text)
     confirmed = Column(Boolean, nullable=False, default=False)
     vuln_count = Column(Integer, default=0)  # saves the amount of vulns when the report was generated.
+    markdown = Column(Boolean, default=False, nullable=False)
 
     workspace_id = Column(Integer, ForeignKey('workspace.id'), index=True, nullable=False)
     workspace = relationship(

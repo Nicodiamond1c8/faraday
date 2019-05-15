@@ -1,4 +1,4 @@
-websocket-client>=0.46.0
+websocket-client>=0.54.0
 autobahn>=17.10.1
 colorama>=0.3.9
 deprecation>=1.0.1
@@ -10,3 +10,4 @@ requests>=2.18.4
 tornado>=4.5.1
 tqdm>=4.15.0
 whoosh>=2.7.4
+Flask-Restless>=0.17.0

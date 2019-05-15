@@ -5,12 +5,17 @@ See the file 'doc/LICENSE' for the license information
 
 '''
 import time
+import json
 import datetime
 from marshmallow import fields, Schema
 from marshmallow.exceptions import ValidationError
 from dateutil.tz import tzutc
 
-from server.models import VulnerabilityABC
+from server.models import (
+    db,
+    VulnerabilityABC,
+    CustomFieldsSchema,
+)
 
 
 class JSTimestampField(fields.Integer):
@@ -26,6 +31,50 @@ class JSTimestampField(fields.Integer):
             return datetime.datetime.fromtimestamp(self._validated(value)/1e3)
 
 
+class FaradayCustomField(fields.Field):
+    def __init__(self, table_name='vulnerability', *args, **kwargs):
+        self.table_name = table_name
+        super(FaradayCustomField, self).__init__(*args, **kwargs)
+
+    def _serialize(self, value, attr, obj, **kwargs):
+        if not value:
+            value = {}
+        res = {}
+        custom_fields = db.session.query(CustomFieldsSchema).filter_by(
+            table_name=self.table_name)
+        for custom_field in custom_fields:
+            serialized_value = value.get(custom_field.field_display_name)
+            res[custom_field.field_display_name] = serialized_value
+
+        return res
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        serialized = {}
+        if value is not None and value:
+            for key, raw_data in value.iteritems():
+                field_schema = db.session.query(CustomFieldsSchema).filter_by(
+                    table_name=self.table_name,
+                    field_display_name=key,
+                ).first()
+                if not field_schema:
+                    raise ValidationError("Invalid custom field, not found in schema. Did you add it first?")
+                if field_schema.field_type == 'str':
+                    serialized[key] = str(raw_data)
+                elif field_schema.field_type == 'int':
+                    try:
+                        serialized[key] = int(raw_data)
+                    except TypeError:
+                        return None
+                    except ValueError:
+                        raise ValidationError("Can not convert custom type to int")
+                elif field_schema.field_type == 'list':
+                    serialized[key] = raw_data
+                else:
+                    raise ValidationError("Custom Field datatype not supported yet")
+
+        return serialized
+
+
 class PrimaryKeyRelatedField(fields.Field):
     def __init__(self, field_name='id', *args, **kwargs):
         self.field_name = field_name
@@ -36,7 +85,10 @@ class PrimaryKeyRelatedField(fields.Field):
         if self.many:
             ret = []
             for item in value:
-                ret.append(getattr(item, self.field_name))
+                try:
+                    ret.append(getattr(item, self.field_name))
+                except AttributeError:
+                    ret.append(item[self.field_name])
             return ret
         else:
             if value is None:

@@ -71,7 +71,6 @@ class CustomClient(FlaskClient):
 def pytest_addoption(parser):
     # currently for tests using sqlite and memory have problem while using transactions
     # we need to review sqlite configuraitons for persistence using PRAGMA.
-    print(TEMPORATY_SQLITE.name)
     parser.addoption('--connection-string', default='sqlite:////{0}'.format(TEMPORATY_SQLITE.name),
                      help="Database connection string. Defaults to in-memory "
                      "sqlite if not specified:")
@@ -213,6 +212,15 @@ def session(database, request):
 
 @pytest.fixture
 def test_client(app):
+
+    # flask.g is persisted in requests, and the werkzeug
+    # CSRF checker could fail if we don't do this
+    from flask import g
+    try:
+        del g.csrf_token
+    except:
+        pass
+
     return app.test_client()
 
 
@@ -268,3 +276,9 @@ def ignore_nplusone(app):
     app.config['NPLUSONE_RAISE'] = False
     yield
     app.config['NPLUSONE_RAISE'] = old
+
+
+@pytest.fixture
+def csrf_token(logged_user, test_client):
+    session_response = test_client.get('/session')
+    return session_response.json.get('csrf_token')

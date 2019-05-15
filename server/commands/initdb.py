@@ -12,6 +12,7 @@ import os
 import sys
 import click
 import psycopg2
+from future.builtins import range # __future__
 from random import SystemRandom
 from tempfile import TemporaryFile
 from subprocess import Popen, PIPE
@@ -25,6 +26,7 @@ from faraday import (
     FARADAY_BASE_CONFIG_XML,
     FARADAY_BASE,
 )
+from server.utils.database import is_unique_constraint_violation
 
 try:
     # py2.7
@@ -125,14 +127,20 @@ class InitDB():
         already_created = False
         try:
             engine.execute("INSERT INTO \"faraday_user\" (username, name, password, "
-                       "is_ldap, active, last_login_ip, current_login_ip, role) VALUES ('faraday', 'Administrator', "
-                       "'{0}', false, true, '127.0.0.1', '127.0.0.1', 'admin');".format(random_password))
-        except sqlalchemy.exc.IntegrityError:
-            # when re using database user could be created previusly
-            already_created = True
-            print(
-            "{yellow}WARNING{white}: Faraday administrator user already exists.".format(
-                yellow=Fore.YELLOW, white=Fore.WHITE))
+                       "is_ldap, active, last_login_ip, current_login_ip, role, state_otp) VALUES ('faraday', 'Administrator', "
+                       "'{0}', false, true, '127.0.0.1', '127.0.0.1', 'admin', 'disabled');".format(random_password))
+        except sqlalchemy.exc.IntegrityError as ex:
+            if is_unique_constraint_violation(ex):
+                # when re using database user could be created previously
+                already_created = True
+                print(
+                "{yellow}WARNING{white}: Faraday administrator user already exists.".format(
+                    yellow=Fore.YELLOW, white=Fore.WHITE))
+            else:
+                print(
+                    "{yellow}WARNING{white}: Can't create administrator user.".format(
+                        yellow=Fore.YELLOW, white=Fore.WHITE))
+                raise 
         if not already_created:
 
             self._save_user_xml(random_password)
@@ -175,7 +183,7 @@ class InitDB():
 
     def generate_random_pw(self, pwlen):
         rng = SystemRandom()
-        return "".join([rng.choice(string.ascii_letters + string.digits) for _ in xrange(pwlen)])
+        return "".join([rng.choice(string.ascii_letters + string.digits) for _ in range(pwlen)])
 
     def _configure_new_postgres_user(self, psql_log_file):
         """
@@ -239,7 +247,7 @@ class InitDB():
             postgres_command = []
 
         print('Creating database {0}'.format(database_name))
-        command = postgres_command + ['createdb', '-O', username, database_name]
+        command = postgres_command + ['createdb', '-E', 'utf8', '-O', username, database_name]
         p = Popen(command, stderr=psql_log_file, stdout=psql_log_file, cwd='/tmp')
         p.wait()
         return_code = p.returncode

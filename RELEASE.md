@@ -2,12 +2,96 @@ IMPORTANT
 ===========
 
 Please be kind to remove all your pyc files before running faraday if you are updating this piece of software.
-Make sure you run ```./faraday.py --update``` the first time after an update!
+Make sure you run ```./manage.py migrate``` the first time after an update!
 
 
 New features in the latest update
 =====================================
 
+
+3.7 [Apr 3rd, 2019]:
+---
+ * New feature vulnerability preview to view vulnerability data.
+ * Update Fierce Plugin. Import can be done from GTK console.
+ * Update Goohost plugin and now Faraday imports Goohost .txt report.
+ * Update plugin for support WPScan v-3.4.5
+ * Update Qualysguard plugin to its 8.17.1.0.2 version
+ * Update custom fields with Searcher
+ * Update Recon-ng Plugin so that it accepts XML reports
+ * Add postres version to status-change command
+ * Couchdb configuration section will not be added anymore
+ * Add unit test for config/default.xml
+
+
+3.6 [Feb 21th, 2019]:
+---
+ * Fix CSRF (Cross-Site Request Forgery) vulnerability in vulnerability attachments API.
+   This allowed an attacker to upload evidence to vulns. He/she required to know the
+   desired workspace name and vulnerability id so it complicated the things a bit. We
+   classified this vuln as a low impact one.
+ * Readonly and disabled workspaces
+ * Add fields 'impact', 'easeofresolution' and 'policyviolations' to vulnerability_template
+ * Add pagination in  'Command history', 'Last Vulnerabilities', 'Activity logs' into dashboard
+ * Add status_code field to web vulnerability
+ * Preserve selection after bulk edition of vulnerabilities in the Web UI
+ * Faraday's database will be created using UTF-8 encoding
+ * Fix bug of "select a different workspace" from an empty list loop.
+ * Fix bug when creating duplicate custom fields
+ * Fix bug when loading in server.ini with extra configs
+ * Fix `./manage.py command`. It wasn't working since the last schema migration
+ * `./manage.py createsuperuser` command renamed to `./manage.py create-superuser`
+ * Fix bug when non-numeric vulnerability IDs were passed to the attachments API
+ * Fix logic in search exploits
+ * Add ability to 'Searcher' to execute rules in loop with dynamic variables
+ * Send searcher alert with custom mail
+ * Add gitlab-ci.yml file to execute test and pylint on gitlab runner
+ * Fix 500 error when updating services and vulns with specific read-only parameters set
+ * Fix SQLMap plugin to support newer versions of the tool
+ * Improve service's parser for Lynis plugin
+ * Fix bug when parsing URLs in Acunetix reports
+ * Fix and update NetSparker Plugin
+ * Fix bug in nessus plugin. It was trying to create a host without IP. Enabled logs on the server for plugin processing (use --debug)
+ * Fix bug when parsing hostnames in Nessus reports
+ * Fix SSLyze report automatic detection, so reports can be imported from the web ui
+ * Update Dnsmap Plugin
+
+3.5 [Jan 16th, 2019]:
+---
+ * Redesgin of new/edit vulnerability forms
+ * Add new custom fields feature to vulnerabilities
+ * Add ./manage.py migrate to perform alembic migrations
+ * Faraday will use webargs==4.4.1 because webargs==5.0.0 fails with Python2
+ * New system for online plugins using Threads, a few fixes for metasploit plugin online also.
+ * Fix Command "python manage.py process-reports" now stops once all reports have been processed
+ * Fix bug in query when it checks if a vulnerability or a workspace exists
+ * Fix Once a workspace is created through the web UI, a folder with its name is created inside ~/.faraday/report/
+ * The manage.py now has a new support funtionality that creates a .zip file with all the information faraday's support team will need to throubleshoot your issue
+ * Status-check checks PostgreSQL encoding
+ * Fix a bug when fail importation of reports, command duration say "In Progress" forever.
+ * Fix confirmed bug in vulns API
+ * Update websockets code to use latest lib version
+ * bootstrap updated to v3.4.0
+ * Manage.py support now throws a message once it finishes the process.
+ * Update Lynis to its version 2.7.1
+ * Updated arp-scan plugin, added support in the Host class for mac address which was deprecated before v3.0
+ * OpenVAS Plugin now supports OpenVAS v-9.0.3
+
+3.4 [December 6th, 2018]:
+---
+ * In GTK, check active_workspace its not null
+ * Add fbruteforce services fplugin
+ * Attachments can be added to a vulnerability through the API.
+ * Catch gaierror error on lynis plugin
+ * Add OR and NOT with parenthesis support on status report search
+ * Info API now is public
+ * Web UI now detects Appscan plugin
+ * Improve performance on the workspace using cusotm query
+ * Workspaces can be set as active/disable in welcome page.
+ * Change Nmap plugin, response field in VulnWeb now goes to Data field.
+ * Update code to support latest SQLAlchemy version
+ * Fix `create_vuln` fplugin bug that incorrectly reported duplicated vulns
+ * Attachments on a vulnerability can be deleted through the API.
+ * Improvement in the coverage of the tests.
 
 3.3 [Novemeber 14th, 2018]:
 ---

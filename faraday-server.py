@@ -20,6 +20,10 @@ try:
     from utils import dependencies
     from utils.user_input import query_yes_no
     from faraday import FARADAY_BASE
+    from utils.logs import setUpLogger
+    from alembic.script import ScriptDirectory
+    from alembic.config import Config
+    from alembic.migration import MigrationContext
 except ImportError as ex:
     print(ex)
     print('Missing dependencies.\nPlease execute: pip install -r requirements_server.txt')
@@ -123,9 +127,26 @@ def check_postgresql():
             sys.exit(1)
 
 
+def check_alembic_version():
+    config = Config()
+    config.set_main_option("script_location", "migrations")
+    script = ScriptDirectory.from_config(config)
+
+    head_revision = script.get_current_head()
+    with app.app_context():
+        conn = db.session.connection()
+        context = MigrationContext.configure(conn)
+
+        if head_revision != context.get_current_revision():
+            print('--' * 20)
+            print('Missing migrations, please execute: \n\n')
+            print('python manage.py migrate')
+            sys.exit(1)
+
 def main():
-    check_postgresql()
     os.chdir(FARADAY_BASE)
+    check_alembic_version()
+    check_postgresql()
     parser = argparse.ArgumentParser()
     parser.add_argument('--ssl', action='store_true', help='enable HTTPS')
     parser.add_argument('--debug', action='store_true', help='run Faraday Server in debug mode')
@@ -145,6 +166,7 @@ def main():
                         version='Faraday v{version}'.format(version=f_version))
 
     args = parser.parse_args()
+    setUpLogger(args.debug)
 
     if args.debug:
         server.utils.logger.set_logging_level(server.config.DEBUG)

@@ -5,7 +5,7 @@
 from flask import Blueprint
 from filteralchemy import FilterSet, operators
 from marshmallow import fields, post_load, ValidationError
-from marshmallow.validate import OneOf
+from marshmallow.validate import OneOf, Range
 from sqlalchemy.orm.exc import NoResultFound
 
 from server.api.base import AutoSchema, ReadWriteWorkspacedView, FilterSetMeta, \
@@ -28,8 +28,10 @@ class ServiceSchema(AutoSchema):
     owned = fields.Boolean(default=False)
     owner = PrimaryKeyRelatedField('username', dump_only=True,
                                    attribute='creator')
-    port = fields.Integer(dump_only=True)  # Port is loaded via ports
-    ports = MutableField(fields.Integer(),
+    port = fields.Integer(dump_only=True, strict=True, required=True,
+                          validate=[Range(min=0, error="The value must be greater than or equal to 0")])  # Port is loaded via ports
+    ports = MutableField(fields.Integer(strict=True, required=True,
+                          validate=[Range(min=0, error="The value must be greater than or equal to 0")]),
                          fields.Method(deserialize='load_ports'),
                          required=True,
                          attribute='port')
@@ -41,6 +43,7 @@ class ServiceSchema(AutoSchema):
     credentials = fields.Integer(attribute='credentials_count', dump_only=True)
     metadata = SelfNestedField(MetadataSchema())
     type = fields.Function(lambda obj: 'Service', dump_only=True)
+    summary = fields.String(dump_only=True)
 
     def load_ports(self, value):
         if not isinstance(value, list):
@@ -48,7 +51,11 @@ class ServiceSchema(AutoSchema):
         if len(value) != 1:
             raise ValidationError('ports must be a list with exactly one'
                                   'element')
-        return str(value.pop())
+        port = value.pop()
+        if port < 0:
+            raise ValidationError('The value must be greater than or equal to 0')
+
+        return str(port)
 
     @post_load
     def post_load_parent(self, data):

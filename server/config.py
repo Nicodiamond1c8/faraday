@@ -6,7 +6,10 @@ from __future__ import absolute_import
 import os
 import shutil
 import errno
-import ConfigParser
+try:
+    import ConfigParser
+except ImportError:
+    import configparser as ConfigParser
 
 from logging import (
     DEBUG,
@@ -125,6 +128,8 @@ class ConfigSection(object):
             section = ssl
         elif section_name == 'storage':
             section = storage
+        else:
+            return
         section.parse(__parser)
 
 
@@ -170,6 +175,7 @@ class SSLConfigObject(ConfigSection):
         self.certificate = None
         self.keyfile = None
         self.port = None
+        self.enabled = False
 
 
 class StorageConfigObject(ConfigSection):
